@@ -56,6 +56,8 @@ import (
 	"k8s.io/kubernetes/pkg/util/sets"
 )
 
+var ETCDPATH = os.Getenv("ETCDPATH") //yansmallb
+
 const (
 	DockerType = "docker"
 
@@ -785,6 +787,25 @@ func (dm *DockerManager) runContainer(
 		}
 	}
 
+	// yansmallb, check env:apps and etcdpath, if true then set netMode to none
+	var startAssigner = false
+	var app = ""
+	glog.V(4).Infof("Start search env for assigner")
+	for _, env := range opts.Envs {
+		if env.Name == "APPS" {
+			if ETCDPATH == "" {
+				glog.Errorf("Error to get ETCDPATH, please set a os env named {ETCDPATH}!")
+			} else {
+				netMode = "none"
+				//utsMode = "none"
+				startAssigner = true
+				app = env.Value
+			}
+			glog.V(4).Infof("Find env for assigner, etchpath=%+v,app=%+v,netMode=%+v,utsMode=%+v", ETCDPATH, app, netMode, utsMode)
+			break
+		}
+	}
+
 	hc := &docker.HostConfig{
 		PortBindings: portBindings,
 		Binds:        binds,
@@ -827,6 +848,18 @@ func (dm *DockerManager) runContainer(
 	if ref != nil {
 		dm.recorder.Eventf(ref, "Started", "Started with docker id %v", util.ShortenString(dockerContainer.ID, 12))
 	}
+	// yansmallb, after start container , try to use pipework add veth
+	if startAssigner {
+		glog.V(0).Infof("Start assigner for %+v: env=%+v, etcdpath=%+v \n", dockerContainer.ID, app, ETCDPATH)
+		cmd := exec.Command("assigner", "get", dockerContainer.ID, app, ETCDPATH)
+		// start assigner
+		if err := cmd.Run(); err != nil {
+			glog.Errorf("Error to exec assigner : %+v", err)
+		}
+		time.Sleep(5 * time.Second)
+		glog.V(0).Infof("----------End assigner------")
+	}
+
 	return dockerContainer.ID, nil
 }
 
@@ -1509,7 +1542,7 @@ func (dm *DockerManager) runContainerInPod(pod *api.Pod, container *api.Containe
 		return "", err
 	}
 
-	utsMode := ""
+	utsMode := "" // yansmallb
 	if pod.Spec.HostNetwork {
 		utsMode = "host"
 	}
