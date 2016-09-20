@@ -56,6 +56,8 @@ import (
 	"k8s.io/kubernetes/pkg/util/sets"
 )
 
+var ETCDPATH = os.Getenv("ETCDPATH") //yansmallb
+
 const (
 	DockerType = "docker"
 
@@ -827,6 +829,7 @@ func (dm *DockerManager) runContainer(
 	if ref != nil {
 		dm.recorder.Eventf(ref, "Started", "Started with docker id %v", util.ShortenString(dockerContainer.ID, 12))
 	}
+
 	return dockerContainer.ID, nil
 }
 
@@ -1447,6 +1450,16 @@ func (dm *DockerManager) killContainer(containerID types.UID, container *api.Con
 		dm.recorder.Eventf(ref, "Killing", "Killing with docker id %v", util.ShortenString(ID, 12))
 		dm.containerRefManager.ClearRef(ID)
 	}
+
+	//yansmallb
+	if ETCDPATH != "" {
+		cmd := exec.Command("assigner", "delete", ID, ETCDPATH)
+		// start assigner
+		if err := cmd.Run(); err != nil {
+			glog.Errorf("Error to exec assigner : %+v", err)
+		}
+	}
+
 	return err
 }
 
@@ -1513,6 +1526,23 @@ func (dm *DockerManager) runContainerInPod(pod *api.Pod, container *api.Containe
 	if pod.Spec.HostNetwork {
 		utsMode = "host"
 	}
+
+	// yansmallb, check env:apps and etcdpath, if true then set netMode to none
+	var startAssigner = false
+	var app = ""
+	if ETCDPATH != "" {
+		glog.V(4).Infof("Start search env for assigner")
+		for _, env := range opts.Envs {
+			if env.Name == "APPS" {
+				netMode = "none"
+				startAssigner = true
+				app = env.Value
+				glog.V(4).Infof("Find env for assigner, etchpath=%+v,app=%+v,netMode=%+v,utsMode=%+v", ETCDPATH, app, netMode, utsMode)
+				break
+			}
+		}
+	}
+
 	id, err := dm.runContainer(pod, container, opts, ref, netMode, ipcMode, utsMode, pidMode)
 	if err != nil {
 		return "", err
@@ -1578,6 +1608,18 @@ func (dm *DockerManager) runContainerInPod(pod *api.Pod, container *api.Containe
 	// the networking namespace.
 	if container.Name == PodInfraContainerName && utsMode != "host" {
 		err = addNDotsOption(containerInfo.ResolvConfPath)
+	}
+
+	// yansmallb, after start container , try to use pipework add veth
+	if startAssigner {
+		glog.V(0).Infof("Start assigner for %+v: env=%+v, etcdpath=%+v \n", id, app, ETCDPATH)
+		cmd := exec.Command("assigner", "get", id, app, ETCDPATH)
+		// start assigner
+		if err := cmd.Run(); err != nil {
+			glog.Errorf("Error to exec assigner : %+v", err)
+		}
+		time.Sleep(5 * time.Second)
+		glog.V(0).Infof("----------End assigner------")
 	}
 
 	return kubeletTypes.DockerID(id), err
@@ -1871,8 +1913,11 @@ func (dm *DockerManager) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, pod
 			glog.Errorf("Failed to inspect pod infra container: %v; Skipping pod %q", err, podFullName)
 			return err
 		}
-		if err = hairpin.SetUpContainer(podInfraContainer.State.Pid, "eth0"); err != nil {
-			glog.Warningf("Hairpin setup failed for pod %q: %v", podFullName, err)
+		// yansmallb
+		if ETCDPATH == "" {
+			if err = hairpin.SetUpContainer(podInfraContainer.State.Pid, "eth0"); err != nil {
+				glog.Warningf("Hairpin setup failed for pod %q: %v", podFullName, err)
+			}
 		}
 
 		// Find the pod IP after starting the infra container in order to expose
