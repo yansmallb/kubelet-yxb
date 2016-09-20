@@ -1,0 +1,4 @@
+所有修改均用//yansmallb标注,主要修改kubelet的部分函数。
+在runContainerInPod函数下添加assigner get功能。
+在SyncPod函数内判断ETCDPATH是否设置，已设置的话不会添加原生veth
+在killContainer函数内添加assigner delete功能。
