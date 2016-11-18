@@ -35,6 +35,7 @@ import (
 	"github.com/golang/glog"
 	"github.com/golang/groupcache/lru"
 	cadvisorApi "github.com/google/cadvisor/info/v1"
+	"github.com/yansmallb/assigner/etcdclient"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/latest"
 	"k8s.io/kubernetes/pkg/api/unversioned"
@@ -1918,11 +1919,13 @@ func (dm *DockerManager) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, pod
 			if err = hairpin.SetUpContainer(podInfraContainer.State.Pid, "eth0"); err != nil {
 				glog.Warningf("Hairpin setup failed for pod %q: %v", podFullName, err)
 			}
+			// Find the pod IP after starting the infra container in order to expose
+			// it safely via the downward API without a race and be able to use podIP in kubelet-managed /etc/hosts file.
+			pod.Status.PodIP = dm.determineContainerIP(pod.Name, pod.Namespace, podInfraContainer)
+		} else {
+			golg.V(4).Infof("Assigner pass add veth for container--------.")
+			pod.Status.PodIP = dm.getIpFromAssigner(pod)
 		}
-
-		// Find the pod IP after starting the infra container in order to expose
-		// it safely via the downward API without a race and be able to use podIP in kubelet-managed /etc/hosts file.
-		pod.Status.PodIP = dm.determineContainerIP(pod.Name, pod.Namespace, podInfraContainer)
 	}
 
 	// Start everything
@@ -1971,6 +1974,22 @@ func (dm *DockerManager) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, pod
 	}
 
 	return nil
+}
+
+func (dm *DockerManager) getIpFromAssigner(pod *api.Pod) string {
+	client, err := etcdclient.NewEtcdClient(ETCDPATH)
+	if err != nil {
+		log.Errorf("cli.query():%+v\n", err)
+		return err
+	}
+	//query from etcd
+	for _, container := range pod.PodSpec.Containers {
+		ip, err := client.QueryContainerid()
+		if err == nil {
+			return ip
+		}
+	}
+	return ""
 }
 
 // verifyNonRoot returns an error if the container or image will run as the root user.
