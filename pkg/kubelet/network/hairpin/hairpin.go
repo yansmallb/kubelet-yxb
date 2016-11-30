@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	osexec "os/exec"
 	"path"
 	"regexp"
 	"strconv"
@@ -96,5 +97,9 @@ func setUpAllInterfaces() error {
 func setUpInterface(ifName string) error {
 	glog.V(3).Infof("Enabling hairpin on interface %s", ifName)
 	hairpinModeFile := path.Join(sysfsNetPath, ifName, hairpinModeRelativePath)
+	// yansmallb
+	osexec.Command("ip", "link", "delete", ifName, "type", "veth").Run()
+	glog.V(3).Infof("---hairpin delete interface %s", ifName)
+
 	return ioutil.WriteFile(hairpinModeFile, []byte(hairpinEnable), 0644)
 }
